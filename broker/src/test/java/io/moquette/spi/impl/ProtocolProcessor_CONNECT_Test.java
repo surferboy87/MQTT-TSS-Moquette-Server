@@ -15,6 +15,15 @@
  */
 package io.moquette.spi.impl;
 
+import static io.moquette.parser.netty.Utils.VERSION_3_1_1;
+import static io.moquette.parser.proto.messages.ConnAckMessage.BAD_USERNAME_OR_PASSWORD;
+import static io.moquette.parser.proto.messages.ConnAckMessage.CONNECTION_ACCEPTED;
+import static io.moquette.parser.proto.messages.ConnAckMessage.IDENTIFIER_REJECTED;
+import static io.moquette.parser.proto.messages.ConnAckMessage.UNNACEPTABLE_PROTOCOL_VERSION;
+import static io.moquette.spi.impl.NettyChannelAssertions.assertEqualsConnAck;
+import static io.moquette.spi.impl.NettyChannelAssertions.assertEqualsSubAck;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import io.moquette.parser.proto.messages.AbstractMessage;
 import io.moquette.parser.proto.messages.ConnectMessage;
 import io.moquette.parser.proto.messages.SubscribeMessage;
@@ -22,24 +31,21 @@ import io.moquette.server.netty.NettyUtils;
 import io.moquette.spi.ClientSession;
 import io.moquette.spi.IMessagesStore;
 import io.moquette.spi.ISessionsStore;
-import io.moquette.spi.impl.subscriptions.SubscriptionsStore;
 import io.moquette.spi.impl.security.PermitAllAuthorizator;
 import io.moquette.spi.impl.subscriptions.Subscription;
+import io.moquette.spi.impl.subscriptions.SubscriptionsStore;
 import io.netty.channel.embedded.EmbeddedChannel;
-import org.junit.Before;
-import org.junit.Test;
 
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
-import static io.moquette.parser.netty.Utils.VERSION_3_1_1;
-import static io.moquette.parser.proto.messages.ConnAckMessage.*;
-import static io.moquette.spi.impl.NettyChannelAssertions.assertEqualsConnAck;
-import static io.moquette.spi.impl.NettyChannelAssertions.assertEqualsSubAck;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import net.huraki.tss.TssHandler;
+import net.huraki.tss.persistence.MapDBTssTopicStore;
+
+import org.junit.Before;
+import org.junit.Test;
 
 /**
  *
@@ -55,6 +61,11 @@ public class ProtocolProcessor_CONNECT_Test {
     ISessionsStore m_sessionStore;
     SubscriptionsStore subscriptions;
     MockAuthenticator m_mockAuthenticator;
+    
+    //Raphael Huber
+    TssHandler tssHandler;
+    MapDBTssTopicStore tssTopicStore;
+    
 
     @Before
     public void setUp() throws InterruptedException {
@@ -70,6 +81,12 @@ public class ProtocolProcessor_CONNECT_Test {
         m_messagesStore = memStorage.messagesStore();
         m_sessionStore = memStorage.sessionsStore();
         //m_messagesStore.initStore();
+        
+        //Raphael Huber
+        tssHandler = new TssHandler();
+        tssTopicStore = new MapDBTssTopicStore();
+        
+        tssHandler.init(tssTopicStore, subscriptions);
 
         Set<String> clientIds = new HashSet<>();
         clientIds.add(ProtocolProcessorTest.FAKE_CLIENT_ID);
@@ -80,7 +97,8 @@ public class ProtocolProcessor_CONNECT_Test {
         subscriptions = new SubscriptionsStore();
         subscriptions.init(m_sessionStore);
         m_processor = new ProtocolProcessor();
-        m_processor.init(subscriptions, m_messagesStore, m_sessionStore, m_mockAuthenticator, true,
+     // Raphael Huber added tssHandler
+        m_processor.init(subscriptions, m_messagesStore, m_sessionStore, tssHandler, m_mockAuthenticator, true,
                 new PermitAllAuthorizator(), ProtocolProcessorTest.NO_OBSERVERS_INTERCEPTOR);
     }
 
@@ -177,7 +195,8 @@ public class ProtocolProcessor_CONNECT_Test {
     @Test
     public void prohibitAnonymousClient() {
         connMsg.setClientID(ProtocolProcessorTest.FAKE_CLIENT_ID);
-        m_processor.init(subscriptions, m_messagesStore, m_sessionStore, m_mockAuthenticator, false,
+        // Raphael Huber added tssHandler
+        m_processor.init(subscriptions, m_messagesStore, m_sessionStore, tssHandler, m_mockAuthenticator, false,
                 new PermitAllAuthorizator(), ProtocolProcessorTest.NO_OBSERVERS_INTERCEPTOR);
 
         //Exercise
@@ -193,7 +212,8 @@ public class ProtocolProcessor_CONNECT_Test {
         connMsg.setClientID(ProtocolProcessorTest.FAKE_CLIENT_ID);
         connMsg.setUserFlag(true);
         connMsg.setUsername(ProtocolProcessorTest.TEST_USER + "_fake");
-        m_processor.init(subscriptions, m_messagesStore, m_sessionStore, m_mockAuthenticator, false,
+     // Raphael Huber added tssHandler
+        m_processor.init(subscriptions, m_messagesStore, m_sessionStore, tssHandler, m_mockAuthenticator, false,
                 new PermitAllAuthorizator(), ProtocolProcessorTest.NO_OBSERVERS_INTERCEPTOR);
 
         //Exercise
@@ -207,7 +227,8 @@ public class ProtocolProcessor_CONNECT_Test {
     @Test
     public void acceptAnonymousClient() {
         connMsg.setClientID(ProtocolProcessorTest.FAKE_CLIENT_ID);
-        m_processor.init(subscriptions, m_messagesStore, m_sessionStore, m_mockAuthenticator, true,
+     // Raphael Huber added tssHandler
+        m_processor.init(subscriptions, m_messagesStore, m_sessionStore, tssHandler, m_mockAuthenticator, true,
                 new PermitAllAuthorizator(), ProtocolProcessorTest.NO_OBSERVERS_INTERCEPTOR);
 
         //Exercise
@@ -220,7 +241,8 @@ public class ProtocolProcessor_CONNECT_Test {
 
     @Test
     public void connectWithCleanSessionUpdateClientSession() throws InterruptedException {
-        m_processor.init(subscriptions, m_messagesStore, m_sessionStore, m_mockAuthenticator, true,
+    	// Raphael Huber added tssHandler
+        m_processor.init(subscriptions, m_messagesStore, m_sessionStore, tssHandler, m_mockAuthenticator, true,
                 new PermitAllAuthorizator(), ProtocolProcessorTest.NO_OBSERVERS_INTERCEPTOR);
 
         //first connect with clean session true
@@ -345,7 +367,8 @@ public class ProtocolProcessor_CONNECT_Test {
     public void testZeroByteClientIdWithoutCleanSession() {
         // Allow zero byte client ids
         m_processor = new ProtocolProcessor();
-        m_processor.init(subscriptions, m_messagesStore, m_sessionStore, m_mockAuthenticator, true, true,
+     // Raphael Huber added tssHandler
+        m_processor.init(subscriptions, m_messagesStore, m_sessionStore, tssHandler, m_mockAuthenticator, true, true,
                 new PermitAllAuthorizator(), ProtocolProcessorTest.NO_OBSERVERS_INTERCEPTOR);
 
         // Connect message without clean session set to true but client id is still null
@@ -365,7 +388,8 @@ public class ProtocolProcessor_CONNECT_Test {
     public void testZeroByteClientIdWithCleanSession() {
         // Allow zero byte client ids
         m_processor = new ProtocolProcessor();
-        m_processor.init(subscriptions, m_messagesStore, m_sessionStore, m_mockAuthenticator, true, true,
+     // Raphael Huber added tssHandler
+        m_processor.init(subscriptions, m_messagesStore, m_sessionStore, tssHandler, m_mockAuthenticator, true, true,
                 new PermitAllAuthorizator(), ProtocolProcessorTest.NO_OBSERVERS_INTERCEPTOR);
 
         // Connect message with clean session set to true and client id is null.
