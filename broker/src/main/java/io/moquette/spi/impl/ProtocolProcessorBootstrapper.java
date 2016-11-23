@@ -16,19 +16,21 @@
 package io.moquette.spi.impl;
 
 import io.moquette.BrokerConstants;
-import io.moquette.server.Server;
-import io.moquette.spi.IMessagesStore;
 import io.moquette.interception.InterceptHandler;
+import io.moquette.server.Server;
 import io.moquette.server.config.IConfig;
+import io.moquette.spi.IMessagesStore;
 import io.moquette.spi.ISessionsStore;
-import io.moquette.spi.impl.security.*;
+import io.moquette.spi.impl.security.ACLFileParser;
+import io.moquette.spi.impl.security.AcceptAllAuthenticator;
+import io.moquette.spi.impl.security.DenyAllAuthorizator;
+import io.moquette.spi.impl.security.FileAuthenticator;
+import io.moquette.spi.impl.security.PermitAllAuthorizator;
 import io.moquette.spi.impl.subscriptions.Subscription;
 import io.moquette.spi.impl.subscriptions.SubscriptionsStore;
 import io.moquette.spi.persistence.MapDBPersistentStore;
 import io.moquette.spi.security.IAuthenticator;
 import io.moquette.spi.security.IAuthorizator;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.lang.reflect.Constructor;
@@ -37,6 +39,11 @@ import java.lang.reflect.Method;
 import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.List;
+
+import net.huraki.tss.TssHandler;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * It's main responsibility is bootstrap the ProtocolProcessor.
@@ -52,6 +59,9 @@ public class ProtocolProcessorBootstrapper {
     private MapDBPersistentStore m_mapStorage;
     
     private ISessionsStore m_sessionsStore;
+    
+    //Raphael Huber
+    private TssHandler tssHandler;
 
     private BrokerInterceptor m_interceptor;
 
@@ -79,6 +89,10 @@ public class ProtocolProcessorBootstrapper {
         m_mapStorage.initStore();
         IMessagesStore messagesStore = m_mapStorage.messagesStore();
         m_sessionsStore = m_mapStorage.sessionsStore();
+        
+        //Raphael Huber
+        tssHandler = new TssHandler();
+        tssHandler.init(m_mapStorage.tssTopicStore(), subscriptions);
 
         List<InterceptHandler> observers = new ArrayList<>(embeddedObservers);
         String interceptorClassName = props.getProperty(BrokerConstants.INTERCEPT_HANDLER_PROPERTY_NAME);
@@ -143,7 +157,9 @@ public class ProtocolProcessorBootstrapper {
 
         boolean allowAnonymous = Boolean.parseBoolean(props.getProperty(BrokerConstants.ALLOW_ANONYMOUS_PROPERTY_NAME, "true"));
         boolean allowZeroByteClientId = Boolean.parseBoolean(props.getProperty(BrokerConstants.ALLOW_ZERO_BYTE_CLIENT_ID_PROPERTY_NAME, "false"));
-        m_processor.init(subscriptions, messagesStore, m_sessionsStore, authenticator, allowAnonymous, allowZeroByteClientId, authorizator, m_interceptor, props.getProperty(BrokerConstants.PORT_PROPERTY_NAME));
+        
+        // Raphael Huber added tssHandler
+        m_processor.init(subscriptions, messagesStore, m_sessionsStore, tssHandler, authenticator, allowAnonymous, allowZeroByteClientId, authorizator, m_interceptor, props.getProperty(BrokerConstants.PORT_PROPERTY_NAME));
         return m_processor;
     }
     
