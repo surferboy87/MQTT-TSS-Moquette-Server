@@ -20,6 +20,8 @@ import io.moquette.server.config.IConfig;
 import io.moquette.spi.IMessagesStore;
 import io.moquette.spi.ISessionsStore;
 import io.moquette.parser.proto.MQTTException;
+import net.huraki.tss.persistence.MapDBTssTopicStore;
+
 import org.mapdb.DB;
 import org.mapdb.DBMaker;
 import org.slf4j.Logger;
@@ -61,6 +63,9 @@ public class MapDBPersistentStore {
     protected final ScheduledExecutorService m_scheduler = Executors.newScheduledThreadPool(1);
     private MapDBMessagesStore m_messageStore;
     private MapDBSessionsStore m_sessionsStore;
+    
+    // Raphael Huber
+    private MapDBTssTopicStore m_tssTopicStore;
 
     public MapDBPersistentStore(IConfig props) {
         this.m_storePath = props.getProperty(PERSISTENT_STORE_PROPERTY_NAME, "");
@@ -76,6 +81,11 @@ public class MapDBPersistentStore {
 
     public ISessionsStore sessionsStore() {
         return m_sessionsStore;
+    }
+    
+    //Raphael Huber
+    public MapDBTssTopicStore tssTopicStore(){
+    	return m_tssTopicStore;
     }
     
     public void initStore() {
@@ -106,6 +116,10 @@ public class MapDBPersistentStore {
 
         m_sessionsStore = new MapDBSessionsStore(m_db, m_messageStore);
         m_sessionsStore.initStore();
+        
+        // Raphael Huber
+        m_tssTopicStore = new MapDBTssTopicStore(m_db);
+        m_tssTopicStore.initStore();
     }
 
     public void close() {
