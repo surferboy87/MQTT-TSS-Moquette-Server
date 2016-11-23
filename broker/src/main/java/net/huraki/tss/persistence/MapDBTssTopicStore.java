@@ -14,6 +14,8 @@ public class MapDBTssTopicStore {
 	private DB db;
 	private ConcurrentMap<String, String> mqttToShortMap;
 	private ConcurrentMap<String, String> shortToMqttMap;
+	
+	public MapDBTssTopicStore(){}
 
 	public MapDBTssTopicStore(DB db) {
 		this.db = db;
