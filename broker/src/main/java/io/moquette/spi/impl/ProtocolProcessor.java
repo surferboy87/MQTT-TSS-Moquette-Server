@@ -15,25 +15,9 @@
  */
 package io.moquette.spi.impl;
 
-import java.nio.ByteBuffer;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.TimeUnit;
-
-import io.moquette.interception.InterceptHandler;
-import io.moquette.server.ConnectionDescriptor;
-import io.moquette.server.netty.AutoFlushHandler;
-import io.moquette.server.netty.NettyUtils;
-import io.moquette.spi.*;
-import io.moquette.spi.IMessagesStore.StoredMessage;
-import io.moquette.spi.security.IAuthenticator;
-import io.moquette.spi.security.IAuthorizator;
-import io.moquette.spi.impl.subscriptions.SubscriptionsStore;
-import io.moquette.spi.impl.subscriptions.Subscription;
-
 import static io.moquette.parser.netty.Utils.VERSION_3_1;
 import static io.moquette.parser.netty.Utils.VERSION_3_1_1;
+import io.moquette.interception.InterceptHandler;
 import io.moquette.interception.messages.InterceptAcknowledgedMessage;
 import io.moquette.parser.proto.messages.AbstractMessage;
 import io.moquette.parser.proto.messages.AbstractMessage.QOSType;
@@ -48,9 +32,35 @@ import io.moquette.parser.proto.messages.SubAckMessage;
 import io.moquette.parser.proto.messages.SubscribeMessage;
 import io.moquette.parser.proto.messages.UnsubAckMessage;
 import io.moquette.parser.proto.messages.UnsubscribeMessage;
+import io.moquette.server.ConnectionDescriptor;
+import io.moquette.server.netty.AutoFlushHandler;
+import io.moquette.server.netty.NettyUtils;
+import io.moquette.spi.ClientSession;
+import io.moquette.spi.IMatchingCondition;
+import io.moquette.spi.IMessagesStore;
+import io.moquette.spi.IMessagesStore.StoredMessage;
+import io.moquette.spi.ISessionsStore;
+import io.moquette.spi.MessageGUID;
+import io.moquette.spi.impl.subscriptions.Subscription;
+import io.moquette.spi.impl.subscriptions.SubscriptionsStore;
+import io.moquette.spi.security.IAuthenticator;
+import io.moquette.spi.security.IAuthorizator;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelPipeline;
 import io.netty.handler.timeout.IdleStateHandler;
+
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.TimeUnit;
+
+import net.huraki.tss.TssHandler;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -126,6 +136,9 @@ public class ProtocolProcessor {
     private IAuthorizator m_authorizator;
     private IMessagesStore m_messagesStore;
     private ISessionsStore m_sessionsStore;
+    //Raphael Huber
+    private TssHandler tssHandler;
+    
     private IAuthenticator m_authenticator;
     private BrokerInterceptor m_interceptor;
     private String m_server_port;
@@ -139,24 +152,30 @@ public class ProtocolProcessor {
 
     public void init(SubscriptionsStore subscriptions, IMessagesStore storageService,
                      ISessionsStore sessionsStore,
+                     // Raphael Huber
+                     TssHandler tssHandler,
                      IAuthenticator authenticator,
                      boolean allowAnonymous, IAuthorizator authorizator, BrokerInterceptor interceptor) {
-        init(subscriptions,storageService,sessionsStore,authenticator,allowAnonymous, false, authorizator,interceptor,null);
+        init(subscriptions,storageService,sessionsStore, tssHandler, authenticator,allowAnonymous, false, authorizator,interceptor,null);
     }
 
     public void init(SubscriptionsStore subscriptions, IMessagesStore storageService,
                      ISessionsStore sessionsStore,
+                     // Raphael Huber
+                     TssHandler tssHandler,
                      IAuthenticator authenticator,
                      boolean allowAnonymous,
                      boolean allowZeroByteClientId, IAuthorizator authorizator, BrokerInterceptor interceptor) {
-        init(subscriptions,storageService,sessionsStore,authenticator,allowAnonymous, allowZeroByteClientId, authorizator,interceptor,null);
+        init(subscriptions,storageService,sessionsStore, tssHandler, authenticator,allowAnonymous, allowZeroByteClientId, authorizator,interceptor,null);
     }
 
     void init(SubscriptionsStore subscriptions, IMessagesStore storageService,
               ISessionsStore sessionsStore,
+              // Raphael Huber
+              TssHandler tssHandler,
               IAuthenticator authenticator,
               boolean allowAnonymous, IAuthorizator authorizator, BrokerInterceptor interceptor, String serverPort) {
-        init(subscriptions, storageService, sessionsStore, authenticator, allowAnonymous, false, authorizator, interceptor, serverPort);
+        init(subscriptions, storageService, sessionsStore, tssHandler, authenticator, allowAnonymous, false, authorizator, interceptor, serverPort);
     }
 
     /**
@@ -173,12 +192,16 @@ public class ProtocolProcessor {
      */
     void init(SubscriptionsStore subscriptions, IMessagesStore storageService,
               ISessionsStore sessionsStore,
+              // Raphael Huber TODO: Edit javadoc
+              TssHandler tssHandler,
               IAuthenticator authenticator,
               boolean allowAnonymous,
               boolean allowZeroByteClientId, IAuthorizator authorizator, BrokerInterceptor interceptor, String serverPort) {
         this.m_clientIDs = new ConcurrentHashMap<>();
         this.m_interceptor = interceptor;
         this.subscriptions = subscriptions;
+        //Raphael Huber
+        this.tssHandler = tssHandler;
         this.allowAnonymous = allowAnonymous;
         this.allowZeroByteClientId = allowZeroByteClientId;
         m_authorizator = authorizator;
@@ -556,6 +579,7 @@ public class ProtocolProcessor {
             LOG.debug("Broker republishing to client <{}> topic <{}> qos <{}>, active {}",
                     sub.getClientId(), sub.getTopicFilter(), qos, targetIsActive);
             ByteBuffer message = origMessage.duplicate();
+            
             if (qos == AbstractMessage.QOSType.MOST_ONE && targetIsActive) {
                 //QoS 0
                 directSend(targetSession, topic, qos, message, false, null);
@@ -584,7 +608,14 @@ public class ProtocolProcessor {
                 clientId, topic, qos, retained, messageID);
         PublishMessage pubMessage = new PublishMessage();
         pubMessage.setRetainFlag(retained);
-        pubMessage.setTopicName(topic);
+        
+        // Raphael Huber
+        if(tssHandler.isRegistedTssClient(clientsession)){
+        	pubMessage.setTopicName(tssHandler.translateBeforeSend(topic));
+        } else {
+        	pubMessage.setTopicName(topic);
+        }
+        // pubMessage.setTopicName(topic);
         pubMessage.setQos(qos);
         pubMessage.setPayload(message);
 
